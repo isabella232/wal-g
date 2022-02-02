@@ -71,7 +71,7 @@ func NewFolder(
 }
 
 func ConfigureFolder(prefix string, settings map[string]string) (storage.Folder, error) {
-	var accountName, accountKey, accountToken, environmentName string
+	var accountName, accountKey, accountToken, storageEndpointSuffix string
 	var ok, usingToken bool
 	if accountName, ok = settings[AccountSetting]; !ok {
 		return nil, NewCredentialError(AccountSetting)
@@ -118,6 +118,13 @@ func ConfigureFolder(prefix string, settings map[string]string) (storage.Folder,
 	}
 
 	storageEndpointSuffix := getStorageEndpointSuffix(environmentName)
+	if storageEndpointSuffix, ok = settings[EndpointSuffix]; !ok {
+		var environmentName string
+		if environmentName, ok = settings[EnvironmentName]; !ok {
+			environmentName = defaultEnvName
+		}
+		storageEndpointSuffix = getStorageEndpointSuffix(environmentName)
+	}
 
 	var containerUrlString string
 	var containerClient azblob.ContainerClient
