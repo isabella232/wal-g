@@ -25,6 +25,7 @@ const (
 	AccountSetting    = "AZURE_STORAGE_ACCOUNT"
 	AccessKeySetting  = "AZURE_STORAGE_ACCESS_KEY"
 	SasTokenSetting   = "AZURE_STORAGE_SAS_TOKEN"
+	EndpointSuffix    = "AZURE_ENDPOINT_SUFFIX"
 	EnvironmentName   = "AZURE_ENVIRONMENT_NAME"
 	BufferSizeSetting = "AZURE_BUFFER_SIZE"
 	MaxBuffersSetting = "AZURE_MAX_BUFFERS"
@@ -86,9 +87,6 @@ func ConfigureFolder(prefix string, settings map[string]string) (storage.Folder,
 			accountToken = "?" + accountToken
 		}
 	}
-	if environmentName, ok = settings[EnvironmentName]; !ok {
-		environmentName = defaultEnvName
-	}
 
 	var credential *azblob.SharedKeyCredential
 	var err error
@@ -117,7 +115,6 @@ func ConfigureFolder(prefix string, settings map[string]string) (storage.Folder,
 		return nil, NewFolderError(err, "Unable to create container")
 	}
 
-	storageEndpointSuffix := getStorageEndpointSuffix(environmentName)
 	if storageEndpointSuffix, ok = settings[EndpointSuffix]; !ok {
 		var environmentName string
 		if environmentName, ok = settings[EnvironmentName]; !ok {
@@ -440,8 +437,7 @@ func getUploadStreamToBlockBlobOptions(settings map[string]string) azblob.Upload
 // Function will get environment's name and return string with the environment's Azure storage account endpoint suffix.
 // Expected names AzureUSGovernmentCloud, AzureChinaCloud, AzureGermanCloud. If any other name is used the func will return
 // the Azure storage account endpoint suffix for AzurePublicCloud.
-func getStorageEndpointSuffix(environmentName string) string {
-	var storageEndpointSuffix string
+func getStorageEndpointSuffix(environmentName string) (storageEndpointSuffix string) {
 	switch environmentName {
 	case azure.USGovernmentCloud.Name:
 		storageEndpointSuffix = azure.USGovernmentCloud.StorageEndpointSuffix
@@ -452,5 +448,5 @@ func getStorageEndpointSuffix(environmentName string) string {
 	default:
 		storageEndpointSuffix = azure.PublicCloud.StorageEndpointSuffix
 	}
-	return storageEndpointSuffix
+	return
 }
