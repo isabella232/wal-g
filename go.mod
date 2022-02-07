@@ -56,6 +56,8 @@ require (
 	gopkg.in/ini.v1 v1.51.0
 )
 
+replace github.com/Azure/azure-sdk-for-go/sdk/storage/azblob => github.com/citusdata/azure-sdk-for-go/sdk/storage/azblob v0.2.1-0.20220207213930-cb4310183c35
+
 require (
 	cloud.google.com/go v0.57.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v0.7.0 // indirect
