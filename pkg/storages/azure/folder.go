@@ -42,6 +42,7 @@ var SettingList = []string{
 	AccountSetting,
 	AccessKeySetting,
 	SasTokenSetting,
+	EndpointSuffix,
 	EnvironmentName,
 	BufferSizeSetting,
 	MaxBuffersSetting,
