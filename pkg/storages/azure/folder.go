@@ -1,13 +1,10 @@
 package azure
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -222,151 +219,16 @@ func (folder *Folder) GetSubFolder(subFolderRelativePath string) storage.Folder 
 		storage.AddDelimiterToPath(storage.JoinPath(folder.path, subFolderRelativePath)))
 }
 
-// From https://github.com/Azure/azure-sdk-for-go/blob/main/sdk/storage/azblob/zc_shared_policy_shared_key_credential.go
-func buildStringToSign(c *azblob.SharedKeyCredential, req *http.Request) (string, error) {
-	// https://docs.microsoft.com/en-us/rest/api/storageservices/authentication-for-the-azure-storage-services
-	headers := req.Header
-	contentLength := headers.Get("Content-Length")
-	if contentLength == "0" {
-		contentLength = ""
-	}
-
-	canonicalizedResource, err := buildCanonicalizedResource(c, req.URL)
-	if err != nil {
-		return "", err
-	}
-
-	stringToSign := strings.Join([]string{
-		req.Method,
-		headers.Get("Content-Encoding"),
-		headers.Get("Content-Language"),
-		contentLength,
-		headers.Get("Content-MD5"),
-		headers.Get("Content-Type"),
-		"", // Empty date because x-ms-date is expected (as per web page above)
-		headers.Get("If-Modified-Since"),
-		headers.Get("If-Match"),
-		headers.Get("If-None-Match"),
-		headers.Get("If-Unmodified-Since"),
-		headers.Get("Range"),
-		buildCanonicalizedHeader(c, headers),
-		canonicalizedResource,
-	}, "\n")
-	return stringToSign, nil
-}
-
-func buildCanonicalizedHeader(c *azblob.SharedKeyCredential, headers http.Header) string {
-	cm := map[string][]string{}
-	for k, v := range headers {
-		headerName := strings.TrimSpace(strings.ToLower(k))
-		if strings.HasPrefix(headerName, "x-ms-") {
-			cm[headerName] = v // NOTE: the value must not have any whitespace around it.
-		}
-	}
-	if len(cm) == 0 {
-		return ""
-	}
-
-	keys := make([]string, 0, len(cm))
-	for key := range cm {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	ch := bytes.NewBufferString("")
-	for i, key := range keys {
-		if i > 0 {
-			ch.WriteRune('\n')
-		}
-		ch.WriteString(key)
-		ch.WriteRune(':')
-		ch.WriteString(strings.Join(cm[key], ","))
-	}
-	return ch.String()
-}
-
-func buildCanonicalizedResource(c *azblob.SharedKeyCredential, u *url.URL) (string, error) {
-	// https://docs.microsoft.com/en-us/rest/api/storageservices/authentication-for-the-azure-storage-services
-	cr := bytes.NewBufferString("/")
-	cr.WriteString(c.AccountName())
-
-	if len(u.Path) > 0 {
-		// Any portion of the CanonicalizedResource string that is derived from
-		// the resource's URI should be encoded exactly as it is in the URI.
-		// -- https://msdn.microsoft.com/en-gb/library/azure/dd179428.aspx
-		cr.WriteString(u.EscapedPath())
-	} else {
-		// a slash is required to indicate the root path
-		cr.WriteString("/")
-	}
-
-	// params is a map[string][]string; param name is key; params values is []string
-	params, err := url.ParseQuery(u.RawQuery) // Returns URL decoded values
-	if err != nil {
-		return "", fmt.Errorf("failed to parse query params: %w", err)
-	}
-
-	if len(params) > 0 { // There is at least 1 query parameter
-		var paramNames []string // We use this to sort the parameter key names
-		for paramName := range params {
-			paramNames = append(paramNames, paramName) // paramNames must be lowercase
-		}
-		sort.Strings(paramNames)
-
-		for _, paramName := range paramNames {
-			paramValues := params[paramName]
-			sort.Strings(paramValues)
-
-			// Join the sorted key values separated by ','
-			// Then prepend "keyName:"; then add this string to the buffer
-			cr.WriteString("\n" + paramName + ":" + strings.Join(paramValues, ","))
-		}
-	}
-	return cr.String(), nil
-}
-// End from https://github.com/Azure/azure-sdk-for-go/blob/main/sdk/storage/azblob/zc_shared_policy_shared_key_credential.go
-
 func (folder *Folder) ReadObject(objectRelativePath string) (io.ReadCloser, error) {
 	path := storage.JoinPath(folder.path, objectRelativePath)
 	blobClient := folder.containerClient.NewBlobClient(path)
-	httpClient := &http.Client{ Timeout: folder.timeout }
 
-	req, err := http.NewRequest("GET", blobClient.URL(), nil)
+	resp, err := blobClient.Download(context.Background(), nil)
 	if err != nil {
 		return nil, NewFolderError(err, "Unable to download blob %s.", path)
 	}
 
-	if folder.credential != nil {
-		// Shared Key auth involves signing each request
-		if d := req.Header.Get("x-ms-data"); d == "" {
-			req.Header.Set("x-ms-date", time.Now().UTC().Format(http.TimeFormat))
-		}
-		stringToSign, stringErr := buildStringToSign(folder.credential, req)
-		if stringErr != nil {
-			return nil, NewFolderError(stringErr, "Unable to sign request to sign blob %s.", path)
-		}
-		signature, sigErr := folder.credential.ComputeHMACSHA256(stringToSign)
-		if sigErr != nil {
-			return nil, NewFolderError(sigErr, "Unable to sign request to sign blob %s.", path)
-		}
-		req.Header.Set("Authorization", strings.Join([]string{"SharedKey ", folder.credential.AccountName(), ":", signature}, ""))
-	}
-
-	resp, err := httpClient.Do(req)
-
-	if err != nil {
-		return nil, NewFolderError(err, "Unable to download blob %s.", path)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		resp.Body.Close()
-		if resp.StatusCode == 404 {
-			return nil, storage.NewObjectNotFoundError(path)
-		} else {
-			return nil, NewFolderError(errors.New(resp.Status), "Unable to download blob %s.", path)
-		}
-	}
-
-	return resp.Body, nil
+	return resp.Body(&azblob.RetryReaderOptions{MaxRetryRequests: 3}), nil
 }
 
 func (folder *Folder) PutObject(name string, content io.Reader) error {
